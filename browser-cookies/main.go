@@ -1,0 +1,72 @@
+// browser-cookies lists cookies for the current page.
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"time"
+
+	"github.com/chromedp/cdproto/network"
+	"github.com/chromedp/cdproto/target"
+	"github.com/chromedp/chromedp"
+)
+
+const (
+	debugURL = "http://localhost:9222"
+	timeout  = 30 * time.Second
+)
+
+func main() {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	allocCtx, allocCancel := chromedp.NewRemoteAllocator(ctx, debugURL)
+	defer allocCancel()
+
+	browserCtx, browserCancel := chromedp.NewContext(allocCtx)
+	defer browserCancel()
+
+	targets, err := chromedp.Targets(browserCtx)
+	if err != nil {
+		fmt.Println("✗ Could not connect to browser:", err)
+		fmt.Println("  Run: browser-start")
+		os.Exit(1)
+	}
+
+	targetID := findLastPageTarget(targets)
+	if targetID == "" {
+		fmt.Println("✗ No active tab found")
+		os.Exit(1)
+	}
+
+	tabCtx, _ := chromedp.NewContext(allocCtx, chromedp.WithTargetID(targetID))
+
+	var cookies []*network.Cookie
+	if err := chromedp.Run(tabCtx, chromedp.ActionFunc(func(ctx context.Context) error {
+		var err error
+		cookies, err = network.GetCookies().Do(ctx)
+		return err
+	})); err != nil {
+		fmt.Println("✗ Could not get cookies:", err)
+		os.Exit(1)
+	}
+
+	for _, c := range cookies {
+		fmt.Printf("%s: %s\n", c.Name, c.Value)
+		fmt.Printf("  domain: %s\n", c.Domain)
+		fmt.Printf("  path: %s\n", c.Path)
+		fmt.Printf("  httpOnly: %t\n", c.HTTPOnly)
+		fmt.Printf("  secure: %t\n", c.Secure)
+		fmt.Println()
+	}
+}
+
+func findLastPageTarget(targets []*target.Info) target.ID {
+	for i := len(targets) - 1; i >= 0; i-- {
+		if targets[i].Type == "page" {
+			return targets[i].TargetID
+		}
+	}
+	return ""
+}
